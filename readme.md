@@ -2,6 +2,6 @@
 ## by Francis David (www.fdavid.com.br)
 
 * BLINK.C
-_ Hello World to Raspberry Pi using lib [wiringPi](www.wiringpi.com)
+Hello World to Raspberry Pi using lib [wiringPi](https://github.com/WiringPi)
 
 
