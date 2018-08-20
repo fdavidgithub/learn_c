@@ -15,7 +15,7 @@
 #define GPIO 1  //for BCM, GPIO 18
 
 #define FLOWRATE    4.5
-#define LITERS(x)   (x / (60 * FLOWRATE))
+#define LITERS(PULSE)   (PULSE / (60 * FLOWRATE))
 
 /*
  * When a variable is change out main program, should be declared volatile for the 
