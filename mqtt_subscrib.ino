@@ -1,5 +1,5 @@
 /* MQTT Client: Subscrib
- * by Francis David (www.fdavid.com.br) 
+ * Francis David (www.fdavid.com.br) 
  * 
  * Build with IDE Arduino 1.8.4
  * 
