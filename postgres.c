@@ -249,7 +249,7 @@ do_select_multiple(PGconn *conn, Record** data)
     for(i=0; i<rows; i++)
         {
             data[i]->id = atoi(PQgetvalue(res, i, 0));
-            sprintf(data[i]->name,  "%s", PQgetvalue(res, i, 1));
+            strcpy(data[i]->name,  PQgetvalue(res, i, 1));
             data[i]->price = atoi(PQgetvalue(res, i, 2));
         }    
 
