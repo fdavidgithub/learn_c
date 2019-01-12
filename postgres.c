@@ -12,104 +12,134 @@
  */
 #include <stdio.h>
 #include <stdlib.h>
+#include <errno.h>
+#include <string.h>
 #include <libpq-fe.h>
-
-/*
- * PGRES_COMMAND_OK
- * Successful completion of a command returning no data.
- *
- * PGRES_TUPLES_OK
- * Successful completion of a command returning data (such as a SELECT or SHOW).
- */
+#include "postgres.h"
 
 /* 
- * Global 
+ * Prototypes 
  */
-struct Record {
-    int id;
-    char name[20];
-    int price;
-};
+static PGconn* do_connect(void);
+static PGconn* do_connect(void);
+static int do_insert(PGconn *);
+static int do_create(PGconn *);
+static Record* do_select_simple(PGconn *);
+static int do_select_multiple(PGconn *, Record**);
+
+/*
+ * Program
+ */
+int 
+main(void) 
+{
+    PGconn *conn;
+    Record *records;
+    int rows;
+    int i;
+    int rc;
+
+    if ((conn = do_connect()) == NULL) 
+        {
+            return EACCES;
+        }
+    if ((rc = do_create(conn)))
+        {
+            PQfinish(conn);
+            return rc;
+        }
+    if ((rc = do_insert(conn)))
+        {
+            PQfinish(conn);
+            return rc;
+        }
+    if ((records = do_select_simple(conn)))
+        {
+            printf("\nSimple SELECT: %d %s %d\n", records->id, records->name, records->price);
+            free(records);
+        }
+    if ((rows = do_select_multiple(conn, &records)) != 0x0)
+        {
+            printf("\nMultiple SELECT...\n");
+            for ( i=0; i<rows; i++ ) 
+                {
+                    printf("%d %s %d\n", records[i].id, records[i].name, records[i].price);
+                }
+            free (records);
+        }
+    PQfinish(conn);
+    return 0;
+}
 
 /* 
  * Functions
  */
-void do_exit(PGconn *conn) 
+static PGconn* 
+do_connect(void)
 {
-    /*
-     * PQfinish
-     * Closes the connection to the server. Also frees memory used by the PGconn object.
-     *
-     * void PQfinish(PGconn *conn);
-     */
-    PQfinish(conn);
-    exit(1);
-}
- 
-PGconn* do_connect()
-{
-    /* PQconnectdb
-     * Makes a new connection to the database server.
-     *
-     * PGconn *PQconnectdb(const char *conninfo);
-     */
     PGconn *conn = PQconnectdb("password=masterkey user=postgres dbname=concrete");
-   
-    if (PQstatus(conn) == CONNECTION_BAD) {
-        fprintf(stderr, "Connection to database failed: %s\n", PQerrorMessage(conn));
-        do_exit(conn);
-    }
-
+    if (PQstatus(conn) == CONNECTION_BAD) 
+        {
+            fprintf(stderr, "Connection to database failed: %s\n", PQerrorMessage(conn));
+            errno = EACCES;
+            return NULL;
+        }
     printf("Database connected!\n");
     printf("User: %s\n", PQuser(conn));
     printf("Database name: %s\n", PQdb(conn));
-    printf("Password: %s\n", PQpass(conn));
-
     return conn;
 }
 
-void do_insert(PGconn *conn)
+static int 
+do_insert(PGconn *conn)
 {
-    PGresult *res;
-
-    res = PQexec(conn, "INSERT INTO Cars VALUES(1,'Audi',52642)");
-        
-    if (PQresultStatus(res) != PGRES_COMMAND_OK) {
-        fprintf(stderr, "Insert record failed: %s\n", PQerrorMessage(conn));
-        do_exit(conn);
-    }
-    
-    PQclear(res);  
-
-    res = PQexec(conn, "INSERT INTO Cars VALUES(2,'Mercedes',57127)");
-        
-    if (PQresultStatus(res) != PGRES_COMMAND_OK) {
-        fprintf(stderr, "Insert record failed: %s\n", PQerrorMessage(conn));
-        do_exit(conn);
-    }
-    
-    PQclear(res);    
-    
-    res = PQexec(conn, "INSERT INTO Cars VALUES(3,'Skoda',9000)");
-        
-    if (PQresultStatus(res) != PGRES_COMMAND_OK) {
-        fprintf(stderr, "Insert record failed: %s\n", PQerrorMessage(conn));
-        do_exit(conn);
-    }
-    
-    PQclear(res);      
+    char *dataset[] = {
+        "1,'Audi',52642",
+        "2,'Mercedes',57127",
+        "3,'Skoda',9000",
+        NULL
+    };
+    char **data = dataset;
+    char *stmt = NULL;
+    int rc = 0x0;
+    while (*data) 
+        {
+            const char *INSERT = "INSERT INTO Cars VALUES(%s)";
+            PGresult *res;
+            stmt = (char *)realloc(stmt, sizeof(char) * (strlen(INSERT) + strlen(*data)));
+            if (!stmt)
+                {
+                    rc = ENOMEM;
+                    break;
+                }
+            sprintf(stmt, INSERT, *data);
+            res = PQexec(conn, stmt);
+            if (PQresultStatus(res) != PGRES_COMMAND_OK)
+                {
+                    PQclear(res);
+                    rc = EIO;
+                    break;
+                }
+            ++data;
+        }
+    if (stmt)
+        {
+            free(stmt);
+        }
     printf("Records inserted!\n");
+    return rc;
 }
 
-void do_create(PGconn *conn)
+static int 
+do_create(PGconn *conn)
 {
     PGresult *res = PQexec(conn, "DROP TABLE IF EXISTS Cars");
     
-    if (PQresultStatus(res) != PGRES_COMMAND_OK) {
-        fprintf(stderr, "Drop table failed: %s\n", PQerrorMessage(conn));
-        do_exit(conn);
-    }
-    
+    if (PQresultStatus(res) != PGRES_COMMAND_OK) 
+        {
+            fprintf(stderr, "Drop table failed: %s\n", PQerrorMessage(conn));
+            return EIO;
+        }
     /*
      * PQclear
      * Frees the storage associated with a PGresult. 
@@ -133,34 +163,40 @@ void do_create(PGconn *conn)
      *
      * ExecStatusType PQresultStatus(const PGresult *res);
      */
-    if (PQresultStatus(res) != PGRES_COMMAND_OK) {
-        fprintf(stderr, "Create table failed: %s\n", PQerrorMessage(conn));
-        do_exit(conn);
-    }
+    if (PQresultStatus(res) != PGRES_COMMAND_OK) 
+        {
+            fprintf(stderr, "Create table failed: %s\n", PQerrorMessage(conn));
+            return EIO;
+        }
     
     PQclear(res);
 
     printf("\nTables created!\n");
+    return 0;
 }
 
-struct Record* do_select_simple(PGconn *conn)
+static Record* 
+do_select_simple(PGconn *conn)
 {
     PGresult *res;
-    struct Record *data;
+    Record *data;
     
     res = PQexec(conn, "SELECT * FROM Cars LIMIT 1");    
 
-    if (PQresultStatus(res) != PGRES_TUPLES_OK) {
-        printf("No data retrieved\n");        
-        PQclear(res);
-        do_exit(conn);
-    } 
+    if (PQresultStatus(res) != PGRES_TUPLES_OK) 
+        {
+            printf("No data retrieved\n");        
+            PQclear(res);
+            errno = EIO;
+            return NULL;
+        } 
 
-    data = malloc(sizeof *data);
-    if ( data == NULL ) {
-        printf("Error malloc\n");
-        do_exit(conn);
-    }
+    data = (Record *)malloc(sizeof(Record));
+    if ( data == NULL ) 
+        {
+            printf("Error malloc\n");
+            errno = ENOMEM;
+        }
  
     /* PQgetvalue
      * Returns a single field value of one row of a PGresult. 
@@ -180,17 +216,19 @@ struct Record* do_select_simple(PGconn *conn)
     return data;
 }
 
-int do_select_multiple(PGconn *conn, struct Record** data)
+static int 
+do_select_multiple(PGconn *conn, Record** data)
 {
     PGresult *res;   
     int rows, i;
 
     res = PQexec(conn, "SELECT * FROM Cars"); 
-    if (PQresultStatus(res) != PGRES_TUPLES_OK) {
-        printf("No data retrieved\n");        
-        PQclear(res);
-        do_exit(conn);
-    } 
+    if (PQresultStatus(res) != PGRES_TUPLES_OK) 
+        {
+            printf("No data retrieved\n");        
+            PQclear(res);
+            return ENOENT;
+        } 
 
     /* PQntuples
      * Returns the number of rows (tuples) in the query result. 
@@ -200,45 +238,21 @@ int do_select_multiple(PGconn *conn, struct Record** data)
      */
     rows = PQntuples(res);
    
-    *data = malloc(rows * (sizeof **data));
-    if ( *data == NULL ) {
-        printf("Error malloc\n");
-        do_exit(conn);
-    }
+    *data = (Record *)malloc(rows * (sizeof(Record)));
+    if ( *data == NULL ) 
+        {
+            fprintf(stderr, "Error malloc\n");
+            return ENOMEM;
+        }
  
     /* Get value and put in array of struct */
-    for(i=0; i<rows; i++) {
-        (*data+i)->id = atoi(PQgetvalue(res, i, 0));
-        sprintf((*data+i)->name,  "%s", PQgetvalue(res, i, 1));
-        (*data+i)->price = atoi(PQgetvalue(res, i, 2));
-    }    
+    for(i=0; i<rows; i++)
+        {
+            data[i]->id = atoi(PQgetvalue(res, i, 0));
+            strcpy(data[i]->name,  PQgetvalue(res, i, 1));
+            data[i]->price = atoi(PQgetvalue(res, i, 2));
+        }    
 
     PQclear(res);
     return rows;
 }
-
-/*
- * Program
- */
-int main() 
-{
-    PGconn *conn = do_connect();
-    struct Record *records;
-    int rows, i;
-
-    do_create(conn);
-    do_insert(conn);
-
-    records = do_select_simple(conn);
-    printf("\nSimple SELECT: %d %s %d\n", records->id, records->name, records->price);
- 
-    rows = do_select_multiple(conn, &records);
-    printf("\nMultiple SELECT...\n");
-    for ( i=0; i<rows; i++ ) {
-        printf("%d %s %d\n", records[i].id, records[i].name, records[i].price);
-    }
-
-    do_exit(conn);
-    return 0;
-}
-
